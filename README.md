@@ -32,4 +32,4 @@ The new data here do not completely reproduce what was in the paper (though they
 ### Experiment 3
 
 - six subids were used twice, leading to 69 total subjects
-- exclusions conducted correctly lead to only one participant being excluded. 
+- exclusions conducted correctly lead to only one participant being excluded.

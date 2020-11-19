@@ -1,5 +1,5 @@
 rm(list=ls())
-source("~/Projects/R/Ranalysis/useful.R") # github.com/langcog/Ranalysis
+source("~/Old Projects/R/Ranalysis/useful.R") # github.com/langcog/Ranalysis
 
 d1 <- read.csv("data/FGGT-E1-data.csv")
 d2 <- read.csv("data/FGGT-E2-data.csv")
@@ -19,3 +19,5 @@ mss3 <- aggregate(correct ~ n.types + subid, d3, mean)
 ms3 <- aggregate(correct ~ n.types, mss3, mean)
 qplot(n.types, correct, data=mss3) + 
   geom_line(aes(x=n.types,y=correct),data=ms3, col="red")
+
+
