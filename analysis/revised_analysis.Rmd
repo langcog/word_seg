@@ -1,0 +1,266 @@
+---
+title: "Revised FGGT data exporting"
+author: "Mike Frank"
+date: "11/18/2020"
+output: html_document
+---
+
+Thanks to reproduction by Hartshorne et al., discovered a bug in the distributed data I believe that the code to tidy and create CSVs from the original data was flawed in particular, in de-identifying the subject IDs (yes, some were identifiable, I was young and inexperienced) I appear to have  incorrectly renamed subjects, leading to redundancy.
+
+Further, I identified a bug in the subject exclusion code - I was iteratively removing subjects, 
+meaning that the mean and SD used for exclusion changed as the loop below progressed
+
+```{matlab eval=FALSE}
+for i = 1:length(vals)
+vals{i}(vals{i}<mean(vals{i})-(2*std(vals{i}))) = [];  
+end
+```
+
+# Anonymization 
+
+```{r}
+library(tidyverse)
+library(digest)
+library(here)
+```
+
+first read in the data
+
+note these paths are absolute not relative, and deal with non-anonymized data, not available. 
+
+```{r}
+d1 <- read_tsv("~/Old Projects/Segmentation/seg_compare/expts/data/data_for_distribution/FGGT-E1-data.txt",
+               col_names = c("subid","sent.len","timestamp","word.len","rt","keypress","correct"), 
+               col_types = "cncnncn")
+d2 <- read_tsv("~/Old Projects/Segmentation/seg_compare/expts/data/data_for_distribution/FGGT-E2-data-mod-11-18-20.txt",
+               col_names = c("subid","n.tokens","timestamp","word.len","rt","keypress","correct"),
+               col_types = "cncnncn")
+d3 <- read_tsv("~/Old Projects/Segmentation/seg_compare/expts/data/data_for_distribution/FGGT-E3-data-mod-11-18-20.txt",
+               col_names = c("subid","n.types","timestamp","word.len","rt","keypress","correct"),
+               col_types = "cncnncn")
+
+```
+
+now output as deidentified data via hashing. 
+
+```{r}
+d1 %<>%
+  group_by(subid, sent.len) %>%
+  mutate(subid = digest::digest(str_c(subid[1], timestamp[1])))
+
+write_csv(d1, here("updated_data/FGGT-E1-corrected-data.csv"))
+
+d2 %<>%
+  group_by(subid, n.tokens) %>%
+  mutate(subid = digest::digest(str_c(subid[1], timestamp[1])))
+
+write_csv(d2, here("updated_data/FGGT-E2-corrected-data.csv"))
+
+d3 %<>%
+  group_by(subid, n.types) %>%
+  mutate(subid = digest::digest(str_c(subid[1], timestamp[1])))
+
+write_csv(d3, here("updated_data/FGGT-E3-corrected-data.csv"))
+```
+
+# E1 analysis
+
+Should have 101 subjects, with 3 excluded.
+
+```{r}
+length(unique(d1$subid))
+```
+
+Check on number of trials. 
+
+```{r}
+d1_trials <- d1 %>%
+  group_by(subid) %>%
+  count %>%
+  pull
+
+all(d1_trials <= 30)
+```
+
+
+
+Reproduce incorrect exclusions from E1 - this function is NOT the right way to exclude, but is based on my old matlab code. 
+
+```{r}
+exclude_iteratively <- function (df) {
+  exclusions <- c()
+  
+  for (i in 1:length(df$subid)) {
+    if (df$correct[i] < mean(df$correct, na.rm=TRUE) - 2 * sd(df$correct, na.rm=TRUE)) {
+      df$correct[i] <- NA
+      exclusions <- c(exclusions, df$subid[i])
+    }
+  }
+  
+  return(exclusions)
+}
+
+```
+
+Sub means
+
+```{r}
+d1_ms <- d1 %>%
+  group_by(subid, sent.len) %>%
+  summarise(correct = mean(correct))
+```
+
+Running the bad exclusion function still doesn't reproduce the 3 exclusions from the original code, likely that's because it is actually ORDER DEPENDENT unfortunately. 
+
+```{r}
+d1_ms %>%
+  split(.$sent.len) %>%
+  map(exclude_iteratively) 
+```
+
+Demonstration that if you arrange the data differently, this exclusion does different things. 
+
+```{r}
+d1_ms %>%
+  group_by(sent.len) %>%
+  arrange(correct) %>%
+  split(.$sent.len) %>%
+  map(exclude_iteratively) 
+```
+
+Sad. Here's a tidier (and more correct) way to do it. Now we get 4.
+
+```{r}
+d1_exclusions <- d1 %>%
+  group_by(subid, sent.len) %>%
+  summarise(correct = mean(correct)) %>%
+  group_by(sent.len) %>% 
+  mutate(cond_mean = mean(correct), 
+         cond_sd = sd(correct), 
+         exclude = correct < cond_mean - 2*cond_sd) %>%
+  filter(exclude) %>%
+  pull(subid)
+
+d1_exclusions
+```
+
+
+```{r}
+d1_paper_mss <- d1 %>%
+  filter(!(subid %in% d1_exclusions)) %>%
+  group_by(sent.len, subid) %>%
+  summarise(correct = mean(correct)) 
+
+d1_paper_ms <- d1_paper_mss %>%
+  group_by(sent.len) %>%
+  summarise(mean = mean(correct))
+
+ggplot(d1_paper_mss, 
+       aes(x = sent.len, y = correct)) + 
+  geom_jitter(height = 0, width = .1, alpha = .5) + 
+  geom_line(data = d1_paper_ms, aes(x = sent.len, y = mean))
+```
+
+# E2 analysis
+
+Should have 72 subjects, with 0 excluded. Instead we have 73 because subject ID 74 got used twice sequentially in the same condition. I modified the data on 11/18/20 to rename this subject and uniquify them. 
+
+```{r}
+length(unique(d2$subid))
+```
+
+Check the number of trials.
+
+```{r}
+d2_trials <- d2 %>%
+  group_by(subid) %>%
+  count %>%
+  pull
+
+all(d2_trials <= 30)
+```
+
+We reported 0 exclusions. Here's the current exclusions list. 
+
+```{r}
+d2_exclusions <- d2 %>%
+  group_by(subid, n.tokens) %>%
+  summarise(correct = mean(correct)) %>%
+  group_by(n.tokens) %>% 
+  mutate(cond_mean = mean(correct), 
+         cond_sd = sd(correct), 
+         exclude = correct < cond_mean - 2*cond_sd) %>%
+  filter(exclude) %>%
+  pull(subid)
+
+d2_exclusions
+```
+
+
+```{r}
+d2_paper_mss <- d2 %>%
+  filter(!(subid %in% d2_exclusions)) %>%
+  group_by(n.tokens, subid) %>%
+  summarise(correct = mean(correct)) 
+
+d2_paper_ms <- d2_paper_mss %>%
+  group_by(n.tokens) %>%
+  summarise(mean = mean(correct))
+
+ggplot(d2_paper_mss, 
+       aes(x = n.tokens, y = correct)) + 
+  geom_jitter(height = 0, width = .1, alpha = .5) + 
+  geom_line(data = d2_paper_ms, aes(x = n.tokens, y = mean))
+```
+
+# E3 analysis
+
+Should have 64 participants with 3 excluded. But in fact, we have the same subid reuse issue, with **six** different subjects. Ugh. So we have:
+
+```{r}
+length(unique(d3$subid))
+```
+
+Check the number of trials.
+
+```{r}
+d3_trials <- d3 %>%
+  group_by(subid) %>%
+  count %>%
+  pull
+
+all(d3_trials <= 30)
+```
+
+We reported two exclusions. Here's what we get with the current dataset. 
+
+```{r}
+d3_exclusions <- d3 %>%
+  group_by(subid, n.types) %>%
+  summarise(correct = mean(correct)) %>%
+  group_by(n.types) %>% 
+  mutate(cond_mean = mean(correct), 
+         cond_sd = sd(correct), 
+         exclude = correct < cond_mean - 2*cond_sd) %>%
+  filter(exclude) %>%
+  pull(subid)
+
+d3_exclusions
+```
+
+
+```{r}
+d3_paper_mss <- d3 %>%
+  filter(!(subid %in% d3_exclusions)) %>%
+  group_by(n.types, subid) %>%
+  summarise(correct = mean(correct)) 
+
+d3_paper_ms <- d3_paper_mss %>%
+  group_by(n.types) %>%
+  summarise(mean = mean(correct))
+
+ggplot(d3_paper_mss, 
+       aes(x = n.types, y = correct)) + 
+  geom_jitter(height = 0, width = .1, alpha = .5) + 
+  geom_line(data = d3_paper_ms, aes(x = n.types, y = mean))
+```
